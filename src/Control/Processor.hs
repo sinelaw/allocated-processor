@@ -8,11 +8,11 @@
 -- Stability   : experimental
 -- Portability : tested on GHC only
 --
--- Framework for expressing IO actions that require initialization and finalizers.
--- This module provides a *functional* interface for defining and chaining a series of processors.
+-- Framework for expressing monadic actions that require initialization and finalization.
+-- This module provides a /functional/ interface for defining and chaining a series of processors.
 --
--- Motivating example: bindings to C libraries that use functions such as: f(foo *src, foo *dst),
--- where the pointer `dst` must be pre-allocated. In this case we normally do:
+-- Motivating example: in the IO monad, bindings to C libraries that use functions such as: f(foo *src, foo
+-- *dst), where the pointer `dst` must be pre-allocated. In this case we normally do:
 --
 --   > foo *dst = allocateFoo();
 --   > ... 
@@ -26,8 +26,8 @@
 --
 -- Processor is an instance of Category, Functor, Applicative and Arrow. 
 --
--- In addition to the general type @'Processor' m a b@, this module also defines the semantic model
--- for @'Processor' IO a b@, which has synonym @'IOProcessor' a b@.
+-- In addition to the general type @'Processor' m a b@, this module also defines (and gives a semantic model
+-- for) @'Processor' IO a b@, which has synonym @'IOProcessor' a b@.
 
 module Control.Processor where
 
@@ -41,19 +41,22 @@ import Control.Monad(liftM, join)
 
 -- | The type of Processors
 --
---    * a, b = the input and output types of the processor (think a -> b)
+--    * @a@, @b@ = the input and output types of the processor (think a -> b)
 --
 --    * x = type of internal state (existentially quantified)
 --
 -- The arguments to the constructor are:
 --
---    1. Processing function: Takes input and internal state, and returns new internal state.
+--    1. @a -> x ->m x@ - Processing function: Takes input and internal state, and returns new internal state.
 --
---    2. Allocator for internal state (this is run only once): Takes (usually the first) input, and returns initial internal state.
+--    2. @a -> m x@ - Allocator for internal state (this is run only once): Takes (usually the first) input, and returns initial internal state.
 --
---    3. Convertor from state x to output b: Takes internal state and returns the output.
+--    3. @x -> m b@ - Convertor from state x to output b: Takes internal state and returns the output.
 --
---    4. Releaser for internal state (finalizer, run once): Run after processor is done being used, to release the internal state.
+--    4. @x -> m ()@ - Releaser for internal state (finalizer, run once): Run after processor is done being used, to release the internal state.
+--
+-- TODO: re-define in terms that don't need the @x@ existential (and the allocator), using a
+-- continuation-style processing function.
 --
 data Processor m a b where
     Processor :: Monad m => (a -> x -> m x) -> (a -> m x) -> (x -> m b) -> (x -> m ()) -> (Processor m a b)
@@ -62,7 +65,7 @@ data Processor m a b where
 --
 -- > [[ 'IOProcessor' a b ]] = a -> b
 --
--- And the following laws:
+-- To satisfy this model, the Processor value (the implementation) must obey the rules:
 --
 --    1. The processing function (@a -> x -> m x@) must act as if purely, so that indeed for a given input the
 --       output is always the same. One particular thing to be careful with is that the output does not depend
@@ -72,9 +75,9 @@ data Processor m a b where
 --    2. For processors that work on pointers, @[[ Ptr t ]] = t@. This is guaranteed by the following
 --       implementation constraints for @IOProcessor a b@:
 --
---       1. If `a` is a pointer type (@a = Ptr p@), then the processor must NOT write (modify) the referenced data.
+--       1. If @a@ is a pointer type (@a = Ptr p@), then the processor must NOT write (modify) the referenced data.
 --
---       2. If `b` is a pointer, the memory it points to (and its allocation status) is only allowed to change
+--       2. If @b@ is a pointer, the memory it points to (and its allocation status) is only allowed to change
 --          by the processor that created it (in the processing and releasing functions). In a way this
 --          generalizes the first constraint.
 --
@@ -295,6 +298,49 @@ runWith f (Processor pf af cf rf) a = do
 
 
 -------------------------------------------------------------
+-- | Creates a processor that operates around an inner processor. 
+--
+-- Useful for sharing resources between two actions, a pre and a post action.
+--        
+-- The outer processor has /two/ processing functions, pre: @a->b@ and post: @c->d@. The last argument is the
+-- inner processor, @Processor b c@.  Thus, the resulting processor takes the @a@, processes it into a @b@,
+-- feeds that through the inner processor to get a @c@, and finally post-processes the @c@ into a @d@.
+--
+-- /Example scenario/: A singleton hardware device context, that cannot be duplicated or allocated more than
+-- once. You need to both read and write to that device. It's not possible to create two processors, one for
+-- reads and one for writes, because they need to use the same allocation (the device context). With
+-- wrapPrcessor you can have the read as the pre-processing and write as the post-processing. Let's call the
+-- result of calling wrapProcessor except the last argument, "myDeviceProcessor". Thus, you have:
+--
+-- >  [[ myDeviceProcessor innerProc ]] = read >>> innerProc >>> write
+--
+wrapProcessor :: Monad m =>
+                 (a -> x -> m x) -> (c -> x -> m x) -> 
+                 (a -> m x) -> (x -> m b) -> (x -> m d) -> (x -> m ()) -> 
+                 Processor m b c -> Processor m a d
+wrapProcessor preProcF postProcF alloc preConv postConv release (Processor pf af cf rf) = processor procF allocF convF releaseF
+    where procF a (x, innerX) = do
+            x1 <- preProcF a x
+            b  <- preConv x1
+            innerX' <- pf b innerX
+            c  <- cf innerX'
+            x2 <- postProcF c x1
+            return (x2, innerX')
+          
+          allocF a = do
+            x <- alloc a
+            b <- preConv x
+            innerX <- af b
+            return (x, innerX)
+            
+          convF (x, _) = postConv x
+
+          releaseF (x, innerX) = do
+            rf innerX
+            release x
+          
+-------------------------------------------------------------
+
 type DTime = Double
 
 type DClock m = m Double
