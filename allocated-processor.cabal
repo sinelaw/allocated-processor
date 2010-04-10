@@ -14,6 +14,7 @@ Tested-With:   GHC == 6.10.4
 
 library
    exposed-modules: Control.Processor
+                    Foreign.ForeignPtrWrap
    hs-Source-Dirs: src
    build-depends: base >= 3 && < 5
    ghc-options: -Wall
