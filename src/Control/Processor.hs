@@ -424,13 +424,12 @@ nStepsMemory n f initA initB clock pIn = (scanlT clock f' (take n . repeat $ ini
               where nextSamps = (dt, y2) : (tail lastNSamps)
 
 -- todo: this is a general function, perhaps move to a module?
-averageV :: (Fractional (Scalar a), VectorSpace a) => [Scalar a] -> [a] -> a
-averageV weights samps = ((1/n) *^) . foldr (^+^) zeroV $ zipWith (*^) weights samps
-    where n = fromIntegral (length weights)
+discreteConv :: (Fractional (Scalar a), VectorSpace a) => [Scalar a] -> [a] -> a
+discreteConv weights samps = foldr (^+^) zeroV $ zipWith (*^) weights samps
           
-  
-movingAverage :: (Monad m, Fractional (Scalar v), VectorSpace v) => [Scalar v] -> t -> m t -> Processor m a [v] -> Processor m a v
-movingAverage weights initTimeStep clock pIn = nStepsMemory (length weights) (averageV weights . map snd) (initTimeStep, zeroV) zeroV clock pIn'
+-- | Finite impulse response
+fir :: (Monad m, Fractional (Scalar v), VectorSpace v) => [Scalar v] -> t -> m t -> Processor m a [v] -> Processor m a v
+fir weights initTimeStep clock pIn = nStepsMemory (length weights) (discreteConv weights . map snd) (initTimeStep, zeroV) zeroV clock pIn'
     where pIn' = pIn >>> arr headOrZero
           headOrZero [] = zeroV -- todo: headOrZero should pick the element closest to the latest average?
           headOrZero xs = head xs
