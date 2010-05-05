@@ -416,12 +416,19 @@ minP clock maxVal = scanlT clock minFunc maxVal
 
 
 
--- todo: 1. works only for discrete time
+-- can only be defined for discrete time
 -- t = the time steps
 nStepsMemory :: (Monad m) => Int -> ([(t, b)] -> c) -> (t, b) -> c -> m t -> Processor m a b -> Processor m a c
 nStepsMemory n f initA initB clock pIn = (scanlT clock f' (take n . repeat $ initA, initB) pIn) >>> arr snd
     where f' _ y2 dt (lastNSamps, _) = (nextSamps, f nextSamps )
               where nextSamps = (dt, y2) : (init lastNSamps)
+
+
+headOrLast :: (Monad m) => b -> m t -> Processor m a [b] -> Processor m a b
+headOrLast initLast clock pIn = scanlT clock f' initLast pIn
+    where f' _ y2 _ last' = pick' y2 last'
+              where pick' []     v  = v
+                    pick' (x:_)  _  = x
 
 -- todo: this is a general function, perhaps move to a module?
 discreteConv :: (VectorSpace a) => [Scalar a] -> [a] -> a
