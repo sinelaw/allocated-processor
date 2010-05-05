@@ -1,4 +1,4 @@
-{-# LANGUAGE RankNTypes, GADTs, NoMonomorphismRestriction #-}
+{-# LANGUAGE RankNTypes, GADTs, NoMonomorphismRestriction, FlexibleContexts #-}
 -- | 
 -- Module      : Control.Processor
 -- Copyright   : (c) Noam Lewis, 2010
@@ -38,6 +38,8 @@ import Control.Applicative hiding (empty)
 import Control.Arrow
 
 import Control.Monad(liftM, join)
+
+import Data.VectorSpace((^*), (^+^), (^-^), (^/), Scalar, VectorSpace, AdditiveGroup, zeroV)
 
 -- | The type of Processors
 --
@@ -314,6 +316,7 @@ runWith f (Processor pf af cf rf) a = do
 --
 -- >  [[ myDeviceProcessor innerProc ]] = read >>> innerProc >>> write
 --
+-- TODO: Find a more general / elegant solution to the "shared resource" problem.
 wrapProcessor :: Monad m =>
                  (a -> x -> m x) -> (c -> x -> m x) -> 
                  (a -> m x) -> (x -> m b) -> (x -> m d) -> (x -> m ()) -> 
@@ -341,14 +344,32 @@ wrapProcessor preProcF postProcF alloc preConv postConv release (Processor pf af
           
 -------------------------------------------------------------
 
-type DTime = Double
+trace :: (Show a) => IOProcessor a a
+trace = processor proc alloc conv release
+    where proc a _ = do
+            print a
+            return a
+          alloc a = do
+            print $ "alloc: " ++ (show a)
+            return a
+          conv = return
+          release _ = return ()
 
-type DClock m = m Double
 
--- | scanlT provides the primitive for performing memory-full operations on time-dependent processors, as described in <http://www.ee.bgu.ac.il/~noamle/_downloads/gaccum.pdf>.
+-------------------------------------------------------------
+-- | scanlT provides the primitive for performing memory-full operations on time-dependent processors, as
+-- | described in <http://www.ee.bgu.ac.il/~noamle/_downloads/gaccum.pdf>.
 --
--- /Untested/, and also doesn't implement the "limit as dt -> 0" part of the model.
-scanlT :: DClock IO -> (b -> b -> DTime -> c -> c) -> c -> IOSource a b -> IOSource a c
+-- /Untested/, and also doesn't implement the "limit as dt -> 0" part of the model. Currently the precision of
+-- the approximation is set by the samplerate (how many times per second the resulting processor is run, the
+-- more the better for precision).
+--
+-- scanlT and all its uses are probably most (or only?) useful in the context of Processor IO. However for
+-- generality it is defined here on arbitrary Processor m.
+--
+-- The @Processor m a b@ argument should really be time-dependent during runtime, so it's model can't be @a ->
+-- b@. Thus it is most logical to use only 'IOSource' types for the processor argument.
+scanlT :: (Monad m) => m t -> (b -> b -> t -> c -> c) -> c -> Processor m a b -> Processor m a c
 scanlT clock transFunc initOut (Processor pf af cf rf) = processor procFunc allocFunc convFunc releaseFunc
     where procFunc curIn' (prevIn, prevOut, x) = do
             x' <- pf curIn' x
@@ -367,20 +388,29 @@ scanlT clock transFunc initOut (Processor pf af cf rf) = processor procFunc allo
           releaseFunc (_, _, x') = rf x'
           
           
--- | Differentiate using scanlT. TODO: test, and also generalize for any monad (trivial change of types).
-differentiate :: (Real b) => DClock IO -> IOSource a b -> IOSource a Double
-differentiate clock = scanlT clock diffFunc 0
-    where diffFunc y' y dt _ = realToFrac (y' - y) / dt -- horrible approximation!
+-- | Differentiate of time-dependent values, using 'scanlT'
+differentiate :: (VectorSpace v, Fractional (Scalar v), Monad m) => m (Scalar v) -> Processor m a v -> Processor m a v
+differentiate clock = scanlT clock diffFunc zeroV
+    where diffFunc y' y dt _ = (y' ^-^ y) ^/ dt -- horrible approximation (unless sample rate is high)!
           
-integrate :: (Real b) => DClock IO -> IOSource a b -> IOSource a Double
-integrate clock p = scanlT clock intFunc 0 p
-    where intFunc y' y dt prevSum = prevSum + realToFrac (y' + y) * dt / 2 -- horrible approximation!
+-- | Integration of time-dependent values, using 'scanlT', implemented by trapezoidal approximation.
+integrate :: (VectorSpace v, Fractional (Scalar v), Monad m) => m (Scalar v) -> Processor m a v -> Processor m a v
+integrate clock p = scanlT clock intFunc zeroV p
+    where intFunc y' y dt prevSum = prevSum ^+^ (y' ^+^ y) ^* (dt / 2) -- horrible approximation!
 
-max_ :: Ord b => DClock IO -> b -> IOSource a b -> IOSource a b
-max_ clock minVal = scanlT clock maxFunc minVal
+
+-- -- | Convolution, using 'integrate'. 
+--convolve :: (Monad m) => m (Scalar v) -> (Scalar v -> v) -> Processor m a v -> Processor m a v
+--convolve clock convArg proc =
+
+
+-- | Running maximum of a processor's values
+maxP :: (Ord b, Monad m) => m t -> b -> Processor m a b -> Processor m a b
+maxP clock minVal = scanlT clock maxFunc minVal
     where maxFunc y' y _ _ = max y' y
           
-min_ :: Ord b => DClock IO -> b -> IOSource a b -> IOSource a b
-min_ clock maxVal = scanlT clock minFunc maxVal
+-- | Running minimum of a processor's values
+minP :: (Ord b, Monad m) => m t -> b -> Processor m a b -> Processor m a b
+minP clock maxVal = scanlT clock minFunc maxVal
     where minFunc y' y _ _ = min y' y
 

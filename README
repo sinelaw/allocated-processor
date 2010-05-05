@@ -1,3 +1,19 @@
 The file src/Control/Processor.hs has documentation inside.
 
 See the "cv-combinators" package for example usage.
+
+TODO:
+-----
+
+- Currently we get segfault if usb cable disconnects
+
+- Make built-in stuff for processors that output "Maybe" types: if the result is Nothing, the next processor
+  in the chain will not be called. 
+  - Implement using the Maybe IO monad instead of regular IO monad?
+  - Make something that lifts IO processors into this monad for those who don't need the Maybe type?
+  - The type we want is Processor IO a (Maybe b)
+  - Also possible to use Either, etc...
+
+
+
+

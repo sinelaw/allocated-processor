@@ -16,7 +16,7 @@ library
    exposed-modules: Control.Processor
                     Foreign.ForeignPtrWrap
    hs-Source-Dirs: src
-   build-depends: base >=4 && <5
+   build-depends: base >=4 && <5, vector-space
    ghc-options: -Wall
 
 -- source-repository head
