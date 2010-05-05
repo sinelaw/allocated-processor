@@ -407,12 +407,12 @@ integrate clock p = scanlT clock intFunc zeroV p
 -- | Running maximum of a processor's values
 maxP :: (Ord b, Monad m) => m t -> b -> Processor m a b -> Processor m a b
 maxP clock minVal = scanlT clock maxFunc minVal
-    where maxFunc y' y _ _ = max y' y
+    where maxFunc _ y _ y' = max y' y
           
 -- | Running minimum of a processor's values
 minP :: (Ord b, Monad m) => m t -> b -> Processor m a b -> Processor m a b
 minP clock maxVal = scanlT clock minFunc maxVal
-    where minFunc y' y _ _ = min y' y
+    where minFunc _ y _ y' = min y' y
 
 
 
@@ -421,15 +421,12 @@ minP clock maxVal = scanlT clock minFunc maxVal
 nStepsMemory :: (Monad m) => Int -> ([(t, b)] -> c) -> (t, b) -> c -> m t -> Processor m a b -> Processor m a c
 nStepsMemory n f initA initB clock pIn = (scanlT clock f' (take n . repeat $ initA, initB) pIn) >>> arr snd
     where f' _ y2 dt (lastNSamps, _) = (nextSamps, f nextSamps )
-              where nextSamps = (dt, y2) : (tail lastNSamps)
+              where nextSamps = (dt, y2) : (init lastNSamps)
 
 -- todo: this is a general function, perhaps move to a module?
-discreteConv :: (Fractional (Scalar a), VectorSpace a) => [Scalar a] -> [a] -> a
+discreteConv :: (VectorSpace a) => [Scalar a] -> [a] -> a
 discreteConv weights samps = foldr (^+^) zeroV $ zipWith (*^) weights samps
           
 -- | Finite impulse response
-fir :: (Monad m, Fractional (Scalar v), VectorSpace v) => [Scalar v] -> t -> m t -> Processor m a [v] -> Processor m a v
-fir weights initTimeStep clock pIn = nStepsMemory (length weights) (discreteConv weights . map snd) (initTimeStep, zeroV) zeroV clock pIn'
-    where pIn' = pIn >>> arr headOrZero
-          headOrZero [] = zeroV -- todo: headOrZero should pick the element closest to the latest average?
-          headOrZero xs = head xs
+fir :: (Monad m, Fractional (Scalar v), VectorSpace v) => [Scalar v] -> t -> m t -> Processor m a v -> Processor m a v
+fir weights initTimeStep clock pIn = nStepsMemory (length weights) (discreteConv weights . map snd) (initTimeStep, zeroV) zeroV clock pIn
