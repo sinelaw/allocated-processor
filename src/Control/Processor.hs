@@ -39,7 +39,7 @@ import Control.Arrow
 
 import Control.Monad(liftM, join)
 
-import Data.VectorSpace((^*), (^+^), (^-^), (^/), Scalar, VectorSpace, AdditiveGroup, zeroV)
+import Data.VectorSpace((^*), (*^), (^+^), (^-^), (^/), Scalar, VectorSpace, AdditiveGroup, zeroV)
 
 -- | The type of Processors
 --
@@ -414,3 +414,23 @@ minP :: (Ord b, Monad m) => m t -> b -> Processor m a b -> Processor m a b
 minP clock maxVal = scanlT clock minFunc maxVal
     where minFunc y' y _ _ = min y' y
 
+
+
+-- todo: 1. works only for discrete time
+-- t = the time steps
+nStepsMemory :: (Monad m) => Int -> ([(t, b)] -> c) -> (t, b) -> c -> m t -> Processor m a b -> Processor m a c
+nStepsMemory n f initA initB clock pIn = (scanlT clock f' (take n . repeat $ initA, initB) pIn) >>> arr snd
+    where f' _ y2 dt (lastNSamps, _) = (nextSamps, f nextSamps )
+              where nextSamps = (dt, y2) : (tail lastNSamps)
+
+-- todo: this is a general function, perhaps move to a module?
+averageV :: (Fractional (Scalar a), VectorSpace a) => [Scalar a] -> [a] -> a
+averageV weights samps = ((1/n) *^) . foldr (^+^) zeroV $ zipWith (*^) weights samps
+    where n = fromIntegral (length weights)
+          
+  
+movingAverage :: (Monad m, Fractional (Scalar v), VectorSpace v) => [Scalar v] -> t -> m t -> Processor m a [v] -> Processor m a v
+movingAverage weights initTimeStep clock pIn = nStepsMemory (length weights) (averageV weights . map snd) (initTimeStep, zeroV) zeroV clock pIn'
+    where pIn' = pIn >>> arr headOrZero
+          headOrZero [] = zeroV -- todo: headOrZero should pick the element closest to the latest average?
+          headOrZero xs = head xs
