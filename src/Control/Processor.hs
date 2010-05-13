@@ -40,6 +40,7 @@ import Control.Arrow
 import Control.Monad(liftM, join)
 
 import Data.VectorSpace((^*), (*^), (^+^), (^-^), (^/), Scalar, VectorSpace, AdditiveGroup, zeroV)
+import Data.Maybe(fromMaybe)
 
 -- | The type of Processors
 --
@@ -424,11 +425,17 @@ nStepsMemory n f initA initB clock pIn = (scanlT clock f' (take n . repeat $ ini
               where nextSamps = (dt, y2) : (init lastNSamps)
 
 
-headOrLast :: (Monad m) => b -> m t -> Processor m a [b] -> Processor m a b
-headOrLast initLast clock pIn = scanlT clock f' initLast pIn
-    where f' _ y2 _ last' = pick' y2 last'
-              where pick' []     v  = v
-                    pick' (x:_)  _  = x
+-- | Holds a Maybe-valued processor and reports the time passed since last value was seen.
+holdMaybe :: (Num t, Monad m) => b -> m t -> Processor m a (Maybe b) -> Processor m a (b, t)
+holdMaybe initLast clock pIn = scanlT clock f' (initLast,0) pIn
+    where f' _ y2 dt (last', timeMissing) = (fromMaybe last' y2, calcTimeMissing y2 timeMissing)
+              where calcTimeMissing Nothing t = t + dt
+                    calcTimeMissing _       _ = 0
+
+-- | Given a 'holdMaybe'-type processor, reverts back to a default value if no input was 
+-- seen for more than a given time limit
+revertAfterT :: (Monad m, Ord t) => t -> b -> Processor m a (b, t) -> Processor m a b
+revertAfterT maxT revertVal p = p >>> arr (\(b,t) -> if t > maxT then revertVal else b)
 
 -- todo: this is a general function, perhaps move to a module?
 discreteConv :: (VectorSpace a) => [Scalar a] -> [a] -> a
